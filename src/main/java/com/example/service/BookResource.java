@@ -135,88 +135,114 @@ public class BookResource {
             // DynamoDBクライアント生成
             Region region = Region.AP_NORTHEAST_1;
             DynamoDbClient ddb = DynamoDbClient.builder().region(region).build();
-            // 検索条件設定
-            Map<String, AttributeValue> attrValues = new HashMap<>();
-            Builder queryBuilder = QueryRequest.builder().tableName("t_bookshelf_book");
-            // ユーザID（クエリはキー指定必須）
-            attrValues.put(":userId", AttributeValue.builder().s(paramCondition.getUserId()).build());
-            queryBuilder = queryBuilder.keyConditionExpression("userId = :userId");
-            // キー以外の条件
-            StringBuilder filterExpressionBuilder = new StringBuilder();
-            // タイトル
-            if (StringUtils.isNotEmpty(paramCondition.getTitle())) {
-                attrValues.put(":title", AttributeValue.builder().s(paramCondition.getTitle()).build());
-                if (filterExpressionBuilder.length() > 0) {
-                    filterExpressionBuilder.append(" and ");
-                }
-                filterExpressionBuilder.append("contains(title, :title)");
-            }
-            // 著者
-            if (StringUtils.isNotEmpty(paramCondition.getAuthor())) {
-                attrValues.put(":author", AttributeValue.builder().s(paramCondition.getAuthor()).build());
-                if (filterExpressionBuilder.length() > 0) {
-                    filterExpressionBuilder.append(" and ");
-                }
-                filterExpressionBuilder.append("contains(author, :author)");
-            }
-            // 読了日（from）
-            if (StringUtils.isNotEmpty(paramCondition.getCompleteDateFrom())) {
-                attrValues.put(":completeDateFrom", AttributeValue.builder().s(paramCondition.getCompleteDateFrom()).build());
-                if (filterExpressionBuilder.length() > 0) {
-                    filterExpressionBuilder.append(" and ");
-                }
-                filterExpressionBuilder.append("completeDate >= :completeDateFrom");
-            }
-            // 読了日（to）
-            if (StringUtils.isNotEmpty(paramCondition.getCompleteDateTo())) {
-                attrValues.put(":completeDateTo", AttributeValue.builder().s(paramCondition.getCompleteDateTo()).build());
-                if (filterExpressionBuilder.length() > 0) {
-                    filterExpressionBuilder.append(" and ");
-                }
-                filterExpressionBuilder.append("completeDate <= :completeDateTo");
-            }
-            // ジャンル
-            if (paramCondition.getGenre() != 0) {
-                attrValues.put(":genre", AttributeValue.builder().n(String.valueOf(paramCondition.getGenre())).build());
-                if (filterExpressionBuilder.length() > 0) {
-                    filterExpressionBuilder.append(" and ");
-                }
-                filterExpressionBuilder.append("genre = :genre");
-            }
-            // 評価
-            if (paramCondition.getRate() != 0) {
-                attrValues.put(":rate", AttributeValue.builder().n(String.valueOf(paramCondition.getRate())).build());
-                if (filterExpressionBuilder.length() > 0) {
-                    filterExpressionBuilder.append(" and ");
-                }
-                filterExpressionBuilder.append("rate = :rate");
-            }
-            queryBuilder = queryBuilder.expressionAttributeValues(attrValues);
-            if (filterExpressionBuilder.length() > 0) {
-                queryBuilder = queryBuilder.filterExpression(filterExpressionBuilder.toString());
-            }
-            QueryRequest queryRequest = queryBuilder.build();
             // クエリ実施
-            QueryResponse queryResponse = ddb.query(queryRequest);
-            // クエリ結果をリストに変換
+            // 結果が1MBを超えることを想定しlastEvaluatedKeyをもとに繰り返しqueryを実行する。
             List<RestBook> bookList = new ArrayList<>();
-            for (Map<String, AttributeValue> item : queryResponse.items()) {
-                RestBook restBook = new RestBook();
-                restBook.setUserId(item.get("userId").s());
-                restBook.setSeqNo(Integer.parseInt(item.get("seqNo").n()));
-                restBook.setTitle(item.get("title").s());
-                restBook.setAuthor(item.get("author").s());
-                restBook.setPrice(Integer.parseInt(item.get("price").n()));
-                restBook.setPublisher(item.get("publisher").s());
-                restBook.setPublished(item.get("published").s());
-                restBook.setCompleteDate(item.get("completeDate").s());
-                restBook.setGenre(Integer.parseInt(item.get("genre").n()));
-                restBook.setMemo(item.get("memo").s());
-                restBook.setRate(Integer.parseInt(item.get("rate").n()));
-                restBook.setImgUrl(item.get("imgUrl").s());
-                restBook.setInfoUrl(item.get("infoUrl").s());
-                bookList.add(restBook);
-            }
+            Map<String, AttributeValue> lastEvaluatedKey = null;
+            do {
+                try {
+                    // 検索条件設定
+                    Map<String, AttributeValue> attrValues = new HashMap<>();
+                    Builder queryBuilder = QueryRequest.builder().tableName("t_bookshelf_book");
+                    // ユーザID（クエリはキー指定必須）
+                    attrValues.put(":userId", AttributeValue.builder().s(paramCondition.getUserId()).build());
+                    queryBuilder = queryBuilder.keyConditionExpression("userId = :userId");
+                    // キー以外の条件
+                    StringBuilder filterExpressionBuilder = new StringBuilder();
+                    // タイトル
+                    if (StringUtils.isNotEmpty(paramCondition.getTitle())) {
+                        attrValues.put(":title", AttributeValue.builder().s(paramCondition.getTitle()).build());
+                        if (filterExpressionBuilder.length() > 0) {
+                            filterExpressionBuilder.append(" and ");
+                        }
+                        filterExpressionBuilder.append("contains(title, :title)");
+                    }
+                    // 著者
+                    if (StringUtils.isNotEmpty(paramCondition.getAuthor())) {
+                        attrValues.put(":author", AttributeValue.builder().s(paramCondition.getAuthor()).build());
+                        if (filterExpressionBuilder.length() > 0) {
+                            filterExpressionBuilder.append(" and ");
+                        }
+                        filterExpressionBuilder.append("contains(author, :author)");
+                    }
+                    // 読了日（from）
+                    if (StringUtils.isNotEmpty(paramCondition.getCompleteDateFrom())) {
+                        attrValues.put(":completeDateFrom", AttributeValue.builder().s(paramCondition.getCompleteDateFrom()).build());
+                        if (filterExpressionBuilder.length() > 0) {
+                            filterExpressionBuilder.append(" and ");
+                        }
+                        filterExpressionBuilder.append("completeDate >= :completeDateFrom");
+                    }
+                    // 読了日（to）
+                    if (StringUtils.isNotEmpty(paramCondition.getCompleteDateTo())) {
+                        attrValues.put(":completeDateTo", AttributeValue.builder().s(paramCondition.getCompleteDateTo()).build());
+                        if (filterExpressionBuilder.length() > 0) {
+                            filterExpressionBuilder.append(" and ");
+                        }
+                        filterExpressionBuilder.append("completeDate <= :completeDateTo");
+                    }
+                    // ジャンル
+                    if (paramCondition.getGenre() != 0) {
+                        attrValues.put(":genre", AttributeValue.builder().n(String.valueOf(paramCondition.getGenre())).build());
+                        if (filterExpressionBuilder.length() > 0) {
+                            filterExpressionBuilder.append(" and ");
+                        }
+                        filterExpressionBuilder.append("genre = :genre");
+                    }
+                    // 評価
+                    if (paramCondition.getRate() != 0) {
+                        attrValues.put(":rate", AttributeValue.builder().n(String.valueOf(paramCondition.getRate())).build());
+                        if (filterExpressionBuilder.length() > 0) {
+                            filterExpressionBuilder.append(" and ");
+                        }
+                        filterExpressionBuilder.append("rate = :rate");
+                    }
+                    queryBuilder = queryBuilder.expressionAttributeValues(attrValues);
+                    if (filterExpressionBuilder.length() > 0) {
+                        queryBuilder = queryBuilder.filterExpression(filterExpressionBuilder.toString());
+                    }
+                    // 前ループのqueryの結果が1MBを超えていた場合にはlastEvaluatedKeyを設定する。
+                    if (lastEvaluatedKey != null) {
+                        queryBuilder.exclusiveStartKey(lastEvaluatedKey);
+                    }
+                    QueryResponse queryResponse = ddb.query(queryBuilder.build());
+                    // クエリ結果をリストに変換
+                    for (Map<String, AttributeValue> item : queryResponse.items()) {
+                        RestBook restBook = new RestBook();
+                        restBook.setUserId(item.get("userId").s());
+                        restBook.setSeqNo(Integer.parseInt(item.get("seqNo").n()));
+                        restBook.setTitle(item.get("title").s());
+                        restBook.setAuthor(item.get("author").s());
+                        restBook.setPrice(Integer.parseInt(item.get("price").n()));
+                        restBook.setPublisher(item.get("publisher").s());
+                        restBook.setPublished(item.get("published").s());
+                        restBook.setCompleteDate(item.get("completeDate").s());
+                        restBook.setGenre(Integer.parseInt(item.get("genre").n()));
+                        restBook.setMemo(item.get("memo").s());
+                        restBook.setRate(Integer.parseInt(item.get("rate").n()));
+                        restBook.setImgUrl(item.get("imgUrl").s());
+                        restBook.setInfoUrl(item.get("infoUrl").s());
+                        bookList.add(restBook);
+                    }
+                    lastEvaluatedKey = queryResponse.lastEvaluatedKey();
+                    if (lastEvaluatedKey == null || lastEvaluatedKey.isEmpty()) {
+                        break;
+                    }
+                } catch (DynamoDbException e) {
+                    System.out.println(e.getMessage());
+                    response = new APIGatewayProxyResponseEvent()
+                            .withStatusCode(HttpStatusCode.INTERNAL_SERVER_ERROR)
+                            .withBody("データベースに接続できませんでした。:" + e.getMessage());
+                    return response;
+                } catch (Exception e) {
+                    System.out.println(e.getMessage());
+                    response = new APIGatewayProxyResponseEvent()
+                            .withStatusCode(HttpStatusCode.INTERNAL_SERVER_ERROR)
+                            .withBody("予期せぬエラーが発生しました。:" + e.getMessage());
+                    return response;
+                }
+            } while (lastEvaluatedKey != null && !lastEvaluatedKey.isEmpty());
+            
             // 読了日の降順に並び替え
             List<RestBook> orderedBookList = bookList.stream().sorted(Comparator.comparing(RestBook::getCompleteDate).reversed()).collect(Collectors.toList());
             // リストをJSON形式に変換
