@@ -13,7 +13,7 @@ import com.auth0.jwt.JWT;
 import com.auth0.jwt.algorithms.Algorithm;
 import com.example.Constant;
 import com.example.dto.RestUser;
-import com.example.utils.SHA256Encoder;
+import com.example.utils.SHA512Encoder;
 
 import software.amazon.awssdk.services.dynamodb.model.AttributeAction;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
@@ -48,10 +48,10 @@ public class UserResource {
             try {
                 paramUser = objectMapper.readValue(requestBody, RestUser.class);
             } catch (JsonProcessingException e) {
-                System.err.println(e.getMessage());
+                System.out.println(e.getMessage());
                 response = new APIGatewayProxyResponseEvent()
                     .withStatusCode(HttpStatusCode.BAD_REQUEST)
-                    .withBody("パラメータが不正です。");
+                    .withBody("パラメータが不正です。" + e.getMessage());
                 return response;
             }
         }
@@ -236,21 +236,43 @@ public class UserResource {
             // DynamoDBクライアント生成
             Region region = Region.AP_NORTHEAST_1;
             DynamoDbClient ddb = DynamoDbClient.builder().region(region).build();
-            // 登録データ作成
-            HashMap<String, AttributeValue> itemValues = new HashMap<>();
-            itemValues.put("id", AttributeValue.builder().s(paramUser.getId()).build());
-            itemValues.put("name", AttributeValue.builder().s(paramUser.getName()).build());
-            itemValues.put("roleName", AttributeValue.builder().s(paramUser.getRoleName()).build());
-            // 初期パスワード生成（初期パスワードは111111）
-            SHA256Encoder encoder = new SHA256Encoder();
-            String iniPassword = encoder.encodePassword("111111");
-            itemValues.put("password", AttributeValue.builder().s(iniPassword).build());
-            // データベースに登録
-            PutItemRequest request = PutItemRequest.builder().tableName("t_bookshelf_user").item(itemValues).build();
-            ddb.putItem(request);
-            response = new APIGatewayProxyResponseEvent()
-                    .withStatusCode(HttpStatusCode.OK)
-                    .withBody("ユーザを登録しました。");
+
+            // ユーザすでにいるかどうか確認する
+            Map<String, AttributeValue> keyToGet = new HashMap<>();
+            keyToGet.put("id", AttributeValue.builder().s(paramUser.getId()).build());
+            GetItemRequest request = GetItemRequest.builder().key(keyToGet).tableName("t_bookshelf_user").build();
+            // データ取得
+            Map<String, AttributeValue> returnedItem = ddb.getItem(request).item();
+            if (returnedItem.isEmpty()) {
+                // いない場合は新規登録
+                // 登録データ作成
+                HashMap<String, AttributeValue> itemValues = new HashMap<>();
+                itemValues.put("id", AttributeValue.builder().s(paramUser.getId()).build());
+                itemValues.put("name", AttributeValue.builder().s(paramUser.getName()).build());
+                itemValues.put("roleName", AttributeValue.builder().s(paramUser.getRoleName()).build());
+                // 初期パスワード生成（初期パスワードは111111）
+                SHA512Encoder encoder = new SHA512Encoder();
+                String iniPassword = encoder.encodePassword("111111");
+                itemValues.put("password", AttributeValue.builder().s(iniPassword).build());
+                // データベースに登録
+                PutItemRequest putItemRequest = PutItemRequest.builder().tableName("t_bookshelf_user").item(itemValues).build();
+                ddb.putItem(putItemRequest);
+                response = new APIGatewayProxyResponseEvent()
+                        .withStatusCode(HttpStatusCode.OK)
+                        .withBody("ユーザを登録しました。");
+            } else {
+                // いる場合は更新
+                // 登録データ生成
+                HashMap<String, AttributeValueUpdate> updateValues = new HashMap<>();
+                updateValues.put("name", AttributeValueUpdate.builder().value(AttributeValue.builder().s(paramUser.getName()).build()).action(AttributeAction.PUT).build());
+                updateValues.put("roleName", AttributeValueUpdate.builder().value(AttributeValue.builder().s(paramUser.getRoleName()).build()).action(AttributeAction.PUT).build());
+                // データベースに登録
+                UpdateItemRequest updateItemRequest = UpdateItemRequest.builder().tableName("t_bookshelf_user").key(keyToGet).attributeUpdates(updateValues).build();
+                ddb.updateItem(updateItemRequest);
+                response = new APIGatewayProxyResponseEvent()
+                        .withStatusCode(HttpStatusCode.OK)
+                        .withBody("ユーザを登録しました。");
+            }
         } catch (ResourceNotFoundException e) {
             System.err.println(e.getMessage());
             response = new APIGatewayProxyResponseEvent()
@@ -292,20 +314,21 @@ public class UserResource {
                 .build();
             QueryResponse queryResponse = ddb.query(queryReq);
             if (queryResponse.count() > 0) {
+                // 本のデータが登録されているので削除できません。0を返答する。
                 response = new APIGatewayProxyResponseEvent()
-                    .withStatusCode(HttpStatusCode.BAD_REQUEST)
-                    .withBody("本のデータが登録されているので削除できません。");
+                    .withStatusCode(HttpStatusCode.OK)
+                    .withBody("0");
                 return response;
             }
             // 削除キーデータ作成
             HashMap<String, AttributeValue> keyToDel = new HashMap<>();
             keyToDel.put("id", AttributeValue.builder().s(targetId).build());
             DeleteItemRequest deleteItemRequest = DeleteItemRequest.builder().tableName("t_bookshelf_user").key(keyToDel).build();
-            // データ削除
+            // データ削除成功 1を返答
             ddb.deleteItem(deleteItemRequest);
             response = new APIGatewayProxyResponseEvent()
                     .withStatusCode(HttpStatusCode.OK)
-                    .withBody("ユーザを削除しました。");
+                    .withBody("1");
         } catch (DynamoDbException e) {
             System.out.println(e.getMessage());
             response = new APIGatewayProxyResponseEvent()
