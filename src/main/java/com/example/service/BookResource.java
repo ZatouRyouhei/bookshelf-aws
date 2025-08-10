@@ -12,6 +12,7 @@ import org.apache.commons.lang3.StringUtils;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
 import com.example.dto.RestBook;
+import com.example.dto.RestGenre;
 import com.example.dto.RestSearchCondition;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -28,6 +29,8 @@ import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest.Builder;
+import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
+import software.amazon.awssdk.services.dynamodb.model.ScanResponse;
 
 public class BookResource {
     public APIGatewayProxyResponseEvent registBook(APIGatewayProxyRequestEvent requestEvent) {
@@ -85,7 +88,7 @@ public class BookResource {
             itemValues.put("publisher", AttributeValue.builder().s(paramBook.getPublisher()).build());
             itemValues.put("published", AttributeValue.builder().s(paramBook.getPublished()).build());
             itemValues.put("completeDate", AttributeValue.builder().s(paramBook.getCompleteDate()).build());
-            itemValues.put("genre", AttributeValue.builder().n(String.valueOf(paramBook.getGenre())).build());
+            itemValues.put("genre", AttributeValue.builder().n(String.valueOf(paramBook.getGenre().getId())).build());
             itemValues.put("memo", AttributeValue.builder().s(paramBook.getMemo()).build());
             itemValues.put("rate", AttributeValue.builder().n(String.valueOf(paramBook.getRate())).build());
             itemValues.put("imgUrl", AttributeValue.builder().s(paramBook.getImgUrl()).build());
@@ -206,6 +209,13 @@ public class BookResource {
                         queryBuilder.exclusiveStartKey(lastEvaluatedKey);
                     }
                     QueryResponse queryResponse = ddb.query(queryBuilder.build());
+                    // ジャンルテーブルを取得する。
+                    ScanRequest scanGenreRequest = ScanRequest.builder().tableName("t_bookshelf_genre").build();
+                    ScanResponse genreResponse = ddb.scan(scanGenreRequest);
+                    Map<Integer, String> genreMap = new HashMap<>();
+                    for (Map<String, AttributeValue> item : genreResponse.items()) {
+                        genreMap.put(Integer.parseInt(item.get("id").n()), item.get("name").s());
+                    }
                     // クエリ結果をリストに変換
                     for (Map<String, AttributeValue> item : queryResponse.items()) {
                         RestBook restBook = new RestBook();
@@ -217,7 +227,12 @@ public class BookResource {
                         restBook.setPublisher(item.get("publisher").s());
                         restBook.setPublished(item.get("published").s());
                         restBook.setCompleteDate(item.get("completeDate").s());
-                        restBook.setGenre(Integer.parseInt(item.get("genre").n()));
+                        // ジャンル設定
+                        RestGenre restGenre = new RestGenre();
+                        restGenre.setId(Integer.parseInt(item.get("genre").n()));
+                        restGenre.setName(genreMap.get(Integer.parseInt(item.get("genre").n())));
+                        restBook.setGenre(restGenre);
+                        
                         restBook.setMemo(item.get("memo").s());
                         restBook.setRate(Integer.parseInt(item.get("rate").n()));
                         restBook.setImgUrl(item.get("imgUrl").s());

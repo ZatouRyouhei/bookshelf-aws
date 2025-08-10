@@ -18,7 +18,7 @@ public class RestBook {
     // 読了日yyyy-MM-dd
     private String completeDate;
     // ジャンル
-    private int genre;
+    private RestGenre genre;
     // 感想
     private String memo;
     // 評価
@@ -76,10 +76,10 @@ public class RestBook {
     public void setCompleteDate(String completeDate) {
         this.completeDate = completeDate;
     }
-    public int getGenre() {
+    public RestGenre getGenre() {
         return genre;
     }
-    public void setGenre(int genre) {
+    public void setGenre(RestGenre genre) {
         this.genre = genre;
     }
     public String getMemo() {
