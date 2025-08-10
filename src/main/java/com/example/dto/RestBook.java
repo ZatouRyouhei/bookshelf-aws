@@ -15,6 +15,8 @@ public class RestBook {
     private String publisher;
     // 出版日yyyy-MM-dd
     private String published;
+    // 購入日yyyy-MM-dd
+    private String buyDate;
     // 読了日yyyy-MM-dd
     private String completeDate;
     // ジャンル
@@ -69,6 +71,12 @@ public class RestBook {
     }
     public void setPublished(String published) {
         this.published = published;
+    }
+    public String getBuyDate() {
+        return buyDate;
+    }
+    public void setBuyDate(String buyDate) {
+        this.buyDate = buyDate;
     }
     public String getCompleteDate() {
         return completeDate;

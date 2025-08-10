@@ -87,6 +87,7 @@ public class BookResource {
             itemValues.put("price", AttributeValue.builder().n(String.valueOf(paramBook.getPrice())).build());
             itemValues.put("publisher", AttributeValue.builder().s(paramBook.getPublisher()).build());
             itemValues.put("published", AttributeValue.builder().s(paramBook.getPublished()).build());
+            itemValues.put("buyDate", AttributeValue.builder().s(paramBook.getBuyDate()).build());
             itemValues.put("completeDate", AttributeValue.builder().s(paramBook.getCompleteDate()).build());
             itemValues.put("genre", AttributeValue.builder().n(String.valueOf(paramBook.getGenre().getId())).build());
             itemValues.put("memo", AttributeValue.builder().s(paramBook.getMemo()).build());
@@ -226,6 +227,7 @@ public class BookResource {
                         restBook.setPrice(Integer.parseInt(item.get("price").n()));
                         restBook.setPublisher(item.get("publisher").s());
                         restBook.setPublished(item.get("published").s());
+                        restBook.setBuyDate(item.get("buyDate").s());
                         restBook.setCompleteDate(item.get("completeDate").s());
                         // ジャンル設定
                         RestGenre restGenre = new RestGenre();
@@ -258,8 +260,8 @@ public class BookResource {
                 }
             } while (lastEvaluatedKey != null && !lastEvaluatedKey.isEmpty());
             
-            // 読了日の降順に並び替え
-            List<RestBook> orderedBookList = bookList.stream().sorted(Comparator.comparing(RestBook::getCompleteDate).reversed()).collect(Collectors.toList());
+            // 購入日の降順に並び替え
+            List<RestBook> orderedBookList = bookList.stream().sorted(Comparator.comparing(RestBook::getBuyDate).reversed()).collect(Collectors.toList());
             // リストをJSON形式に変換
             ObjectMapper mapper = new ObjectMapper();
             mapper.enable(SerializationFeature.INDENT_OUTPUT);
