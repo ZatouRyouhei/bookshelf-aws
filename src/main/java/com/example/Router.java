@@ -63,6 +63,10 @@ public class Router implements RequestHandler<APIGatewayProxyRequestEvent, APIGa
                 BookResource bookResource = new BookResource();
                 response = bookResource.searchBook(requestEvent);
             }
+            case Constant.BASE_URL + "/book/download/" -> {
+                BookResource bookResource = new BookResource();
+                response = bookResource.downloadExcel(requestEvent);
+            }
             // パスパラメータを使用する場合の記載
             // パスパラメータを使用する場合はAPI Gatewayに専用のリソースを作成する必要がある。
             case String s when s.startsWith(Constant.BASE_URL + "/book/delete/") -> {
