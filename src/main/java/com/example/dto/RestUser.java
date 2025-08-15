@@ -5,6 +5,7 @@ public class RestUser {
     private String password;
     private String name;
     private String roleName;
+    private String mailAddress;
     private String token;
 
     public String getId() {
@@ -30,6 +31,12 @@ public class RestUser {
     }
     public void setRoleName(String roleName) {
         this.roleName = roleName;
+    }
+    public String getMailAddress() {
+        return mailAddress;
+    }
+    public void setMailAddress(String mailAddress) {
+        this.mailAddress = mailAddress;
     }
     public String getToken() {
         return token;

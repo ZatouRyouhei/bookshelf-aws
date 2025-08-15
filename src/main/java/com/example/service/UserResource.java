@@ -7,12 +7,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.apache.commons.lang3.StringUtils;
+
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
 import com.auth0.jwt.JWT;
 import com.auth0.jwt.algorithms.Algorithm;
 import com.example.Constant;
 import com.example.dto.RestUser;
+import com.example.utils.PasswordGenerator;
 import com.example.utils.SHA512Encoder;
 
 import software.amazon.awssdk.services.dynamodb.model.AttributeAction;
@@ -29,6 +32,12 @@ import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
 import software.amazon.awssdk.services.dynamodb.model.ScanResponse;
 import software.amazon.awssdk.services.dynamodb.model.UpdateItemRequest;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
+import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.CreateQueueRequest;
+import software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest;
+import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
+import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
+import software.amazon.awssdk.services.sqs.model.SqsException;
 import software.amazon.awssdk.http.HttpStatusCode;
 import software.amazon.awssdk.regions.Region;
 
@@ -184,6 +193,7 @@ public class UserResource {
                 restUser.setId(item.get("id").s());
                 restUser.setName(item.get("name").s());
                 restUser.setRoleName(item.get("roleName").s());
+                restUser.setMailAddress(item.get("mailAddress").s());
                 userList.add(restUser);
             }
             // id順に並び替え
@@ -250,22 +260,50 @@ public class UserResource {
                 itemValues.put("id", AttributeValue.builder().s(paramUser.getId()).build());
                 itemValues.put("name", AttributeValue.builder().s(paramUser.getName()).build());
                 itemValues.put("roleName", AttributeValue.builder().s(paramUser.getRoleName()).build());
-                // 初期パスワード生成（初期パスワードは111111）
+                itemValues.put("mailAddress", AttributeValue.builder().s(paramUser.getMailAddress()).build());
+                // 初期パスワード生成（ランダムの文字列6文字）
+                String generatePassword = PasswordGenerator.generate(6);
                 SHA512Encoder encoder = new SHA512Encoder();
-                String iniPassword = encoder.encodePassword("111111");
+                String iniPassword = encoder.encodePassword(generatePassword);
                 itemValues.put("password", AttributeValue.builder().s(iniPassword).build());
                 // データベースに登録
                 PutItemRequest putItemRequest = PutItemRequest.builder().tableName("t_bookshelf_user").item(itemValues).build();
                 ddb.putItem(putItemRequest);
+
                 response = new APIGatewayProxyResponseEvent()
                         .withStatusCode(HttpStatusCode.OK)
                         .withBody("ユーザを登録しました。");
+
+                // 生成したパスワードをメールで通知する
+                SqsClient sqsClient = SqsClient.builder().region(region).build();
+                Map<String, MessageAttributeValue> messageAttributeMap = Map.of(
+                    "title", MessageAttributeValue.builder()
+                                .stringValue("【ワタシノホンダナ】ユーザ新規登録")
+                                .dataType("String")
+                                .build(),
+                    "body", MessageAttributeValue.builder()
+                                .stringValue(String.format("ユーザを新規登録しました。\n URL : %s \n ID : %s \n パスワード : %s", Constant.SYSTEM_URL, paramUser.getId(), generatePassword))
+                                .dataType("String")
+                                .build(),
+                    "mailto", MessageAttributeValue.builder()
+                                .stringValue(paramUser.getMailAddress())
+                                .dataType("String")
+                                .build()
+                );
+                SendMessageRequest sendMsgRequest = SendMessageRequest.builder()
+                    .queueUrl(Constant.QUEUE_URL)
+                    .messageBody(messageAttributeMap.get("body").stringValue())
+                    .messageAttributes(messageAttributeMap)
+                    .delaySeconds(1)
+                    .build();
+                sqsClient.sendMessage(sendMsgRequest);
             } else {
                 // いる場合は更新
                 // 登録データ生成
                 HashMap<String, AttributeValueUpdate> updateValues = new HashMap<>();
                 updateValues.put("name", AttributeValueUpdate.builder().value(AttributeValue.builder().s(paramUser.getName()).build()).action(AttributeAction.PUT).build());
                 updateValues.put("roleName", AttributeValueUpdate.builder().value(AttributeValue.builder().s(paramUser.getRoleName()).build()).action(AttributeAction.PUT).build());
+                updateValues.put("mailAddress", AttributeValueUpdate.builder().value(AttributeValue.builder().s(paramUser.getMailAddress()).build()).action(AttributeAction.PUT).build());
                 // データベースに登録
                 UpdateItemRequest updateItemRequest = UpdateItemRequest.builder().tableName("t_bookshelf_user").key(keyToGet).attributeUpdates(updateValues).build();
                 ddb.updateItem(updateItemRequest);
@@ -335,6 +373,82 @@ public class UserResource {
                     .withStatusCode(HttpStatusCode.INTERNAL_SERVER_ERROR)
                     .withBody("データベースに接続できませんでした。: " + e.getMessage());
             return response;
+        }
+        return response;
+    }
+
+    public APIGatewayProxyResponseEvent resetPassword(APIGatewayProxyRequestEvent requestEvent) {
+        APIGatewayProxyResponseEvent response = new APIGatewayProxyResponseEvent();
+
+        // パスワード初期化対象のidを取得
+        String targetId = "";
+        Map<String, String> pathParameters = requestEvent.getPathParameters();
+        if (pathParameters != null) {
+            targetId = pathParameters.get("id");
+        }
+
+        // DynamoDBクライアント生成
+        Region region = Region.AP_NORTHEAST_1;
+        DynamoDbClient ddb = DynamoDbClient.builder().region(region).build();
+
+        // ユーザが存在するかどうか確認する
+        Map<String, AttributeValue> keyToGet = new HashMap<>();
+        keyToGet.put("id", AttributeValue.builder().s(targetId).build());
+        GetItemRequest request = GetItemRequest.builder().key(keyToGet).tableName("t_bookshelf_user").build();
+        // データ取得
+        Map<String, AttributeValue> returnedItem = ddb.getItem(request).item();
+        if (!returnedItem.isEmpty()) {
+            // ユーザが存在している場合は処理続行
+            // アップデート対象のキー設定
+            HashMap<String, AttributeValue> itemKey = new HashMap<>();
+            itemKey.put("id", AttributeValue.builder().s(targetId).build());
+
+            // 初期パスワード生成（ランダムの文字列6文字）
+            String generatePassword = PasswordGenerator.generate(6);
+            SHA512Encoder encoder = new SHA512Encoder();
+            String iniPassword = encoder.encodePassword(generatePassword);
+
+            // 登録データ生成
+            HashMap<String, AttributeValueUpdate> updateValues = new HashMap<>();
+            updateValues.put("password", AttributeValueUpdate.builder().value(AttributeValue.builder().s(iniPassword).build()).action(AttributeAction.PUT).build());
+            
+            // データベースに登録
+            UpdateItemRequest updateItemRequest = UpdateItemRequest.builder().tableName("t_bookshelf_user").key(itemKey).attributeUpdates(updateValues).build();
+            ddb.updateItem(updateItemRequest);
+
+            response = new APIGatewayProxyResponseEvent()
+                    .withStatusCode(HttpStatusCode.OK)
+                    .withBody("パスワードが初期化されました。");
+
+            // 生成したパスワードをメールで通知する
+            SqsClient sqsClient = SqsClient.builder().region(region).build();
+            String mailAddress = returnedItem.get("mailAddress").s();
+            Map<String, MessageAttributeValue> messageAttributeMap = Map.of(
+                "title", MessageAttributeValue.builder()
+                            .stringValue("【ワタシノホンダナ】パスワード初期化")
+                            .dataType("String")
+                            .build(),
+                "body", MessageAttributeValue.builder()
+                            .stringValue(String.format("パスワードを初期化しました。\n URL : %s \n ID : %s \n パスワード : %s", Constant.SYSTEM_URL, targetId, generatePassword))
+                            .dataType("String")
+                            .build(),
+                "mailto", MessageAttributeValue.builder()
+                            .stringValue(mailAddress)
+                            .dataType("String")
+                            .build()
+            );
+            SendMessageRequest sendMsgRequest = SendMessageRequest.builder()
+                .queueUrl(Constant.QUEUE_URL)
+                .messageBody(messageAttributeMap.get("body").stringValue())
+                .messageAttributes(messageAttributeMap)
+                .delaySeconds(1)
+                .build();
+            sqsClient.sendMessage(sendMsgRequest);
+        } else {
+            // ユーザが存在しない場合は処理終了
+            response = new APIGatewayProxyResponseEvent()
+                    .withStatusCode(HttpStatusCode.BAD_GATEWAY)
+                    .withBody("パラメータが不正です。");
         }
         return response;
     }

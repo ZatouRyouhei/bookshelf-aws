@@ -55,6 +55,10 @@ public class Router implements RequestHandler<APIGatewayProxyRequestEvent, APIGa
                 UserResource userResource = new UserResource();
                 response = userResource.deleteUser(requestEvent);
             }
+            case String s when s.startsWith(Constant.BASE_URL + "/user/reset/") -> {
+                UserResource userResource = new UserResource();
+                response = userResource.resetPassword(requestEvent);
+            }
             case Constant.BASE_URL + "/book/regist/" -> {
                 BookResource bookResource = new BookResource();
                 response = bookResource.registBook(requestEvent);
