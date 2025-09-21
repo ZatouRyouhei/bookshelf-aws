@@ -77,6 +77,10 @@ public class Router implements RequestHandler<APIGatewayProxyRequestEvent, APIGa
                 BookResource bookResource = new BookResource();
                 response = bookResource.deleteBook(requestEvent);
             }
+            case String s when s.startsWith(Constant.BASE_URL + "/book/batch/") -> {
+                BookResource bookResource = new BookResource();
+                response = bookResource.batchRegistBook(requestEvent);
+            }
             case Constant.BASE_URL + "/genre/getList/" -> {
                 GenreResource genreResource = new GenreResource();
                 response = genreResource.getList(requestEvent);

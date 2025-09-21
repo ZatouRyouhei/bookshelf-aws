@@ -3,6 +3,7 @@ package com.example.service;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -19,8 +20,10 @@ import org.apache.commons.lang3.StringUtils;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyRequestEvent;
 import com.amazonaws.services.lambda.runtime.events.APIGatewayProxyResponseEvent;
 import com.example.dto.RestBook;
+import com.example.dto.RestErrorMsg;
 import com.example.dto.RestGenre;
 import com.example.dto.RestSearchCondition;
+import com.example.entity.Book;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -29,15 +32,18 @@ import software.amazon.awssdk.http.HttpStatusCode;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
+import software.amazon.awssdk.services.dynamodb.model.BatchWriteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.DeleteItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.DynamoDbException;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
+import software.amazon.awssdk.services.dynamodb.model.PutRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest;
 import software.amazon.awssdk.services.dynamodb.model.QueryResponse;
 import software.amazon.awssdk.services.dynamodb.model.ResourceNotFoundException;
 import software.amazon.awssdk.services.dynamodb.model.QueryRequest.Builder;
 import software.amazon.awssdk.services.dynamodb.model.ScanRequest;
 import software.amazon.awssdk.services.dynamodb.model.ScanResponse;
+import software.amazon.awssdk.services.dynamodb.model.WriteRequest;
 
 import org.apache.poi.hssf.usermodel.HSSFDataFormat;
 import org.apache.poi.ss.usermodel.BorderStyle;
@@ -673,6 +679,207 @@ public class BookResource {
                     .withStatusCode(HttpStatusCode.INTERNAL_SERVER_ERROR)
                     .withBody("データベースに接続できませんでした。: " + e.getMessage());
             return response;
+        }
+        return response;
+    }
+
+    public APIGatewayProxyResponseEvent batchRegistBook(APIGatewayProxyRequestEvent requestEvent) {
+        APIGatewayProxyResponseEvent response = new APIGatewayProxyResponseEvent();
+
+        // 登録対象のidを取得
+        String targetId = "";
+        Map<String, String> pathParameters = requestEvent.getPathParameters();
+        if (pathParameters != null) {
+            targetId = pathParameters.get("userId");
+        }
+        // パスパラメータが設定されていないときはエラー
+        if ("".equals(targetId)) {
+            response = new APIGatewayProxyResponseEvent()
+                    .withStatusCode(HttpStatusCode.BAD_REQUEST)
+                    .withBody("パラメータが不正です。");
+            return response;
+        }
+
+        // パラメータ取得
+        String requestBody = requestEvent.getBody();
+        // Base64でエンコードされているか確認
+        boolean isBase64Encoded = requestEvent.getIsBase64Encoded();
+        String decodedBody;
+        if (isBase64Encoded) {
+            // Base64文字列をバイト配列にデコード
+            Base64.Decoder decoder = Base64.getDecoder();
+            byte[] decodeBytes = decoder.decode(requestBody);
+            decodedBody = new String(decodeBytes, StandardCharsets.UTF_8);
+        } else {
+            decodedBody = requestBody;
+        }
+        
+        // ボディ部の抽出
+        String[] lines = decodedBody.split("\r\n|\r|\n");
+        List<String> recordList = new ArrayList<>();
+        for (String line : lines) {
+            // "------WebKitFormBoundary..." などのヘッダー部分を無視
+            if (line.startsWith("------") || line.contains("Content-Disposition:") || line.contains("Content-Type:")) {
+                continue;
+            }
+            // 空行も無視
+            if (line.trim().isEmpty()) {
+                continue;
+            }
+            recordList.add(line);
+        }
+        // System.out.println("recordList size : " + recordList.size());
+        // System.out.println("recordList : " + String.join(":", recordList));
+
+        // チェック処理
+        List<RestErrorMsg> errorList = new ArrayList<>();  // エラーメッセージのリスト
+        if (recordList.size() == 0) {
+            RestErrorMsg error = new RestErrorMsg(0, "1行以上入力してください。");
+            errorList.add(error);
+        } else {
+            for (int i = 0; i < recordList.size(); i++) {
+                String record = recordList.get(i);
+                // System.out.println(record);
+                String[] bookData = record.split(",", -1); // -1を指定して空の項目も保持
+                // System.out.println(record + " : " + String.join(",", bookData) + " : " + bookData.length);
+                if (bookData.length != 12) {
+                    RestErrorMsg error = new RestErrorMsg(i + 1, "項目数に誤りがあります。項目数は12です。");
+                    errorList.add(error);
+                    continue;
+                }
+                // 発売日 日付変換ができるかどうかチェック
+                String published = bookData[4];
+                try {
+                    new SimpleDateFormat("yyyy-MM-dd").parse(published);
+                } catch (ParseException e) {
+                    RestErrorMsg error = new RestErrorMsg(i + 1, "発売日のフォーマットに誤りがあります。");
+                    errorList.add(error);
+                }
+                // 購入日 日付変換ができるかどうかチェック
+                String buyDate = bookData[5];
+                try {
+                    new SimpleDateFormat("yyyy-MM-dd").parse(buyDate);
+                } catch (ParseException e) {
+                    RestErrorMsg error = new RestErrorMsg(i + 1, "購入日のフォーマットに誤りがあります。");
+                    errorList.add(error);
+                }
+                // 読了日 日付変換ができるかどうかチェック
+                String completeDate = bookData[6];
+                try {
+                    if (StringUtils.isNotEmpty(completeDate)) {
+                        new SimpleDateFormat("yyyy-MM-dd").parse(completeDate);
+                    }
+                } catch (ParseException e) {
+                    RestErrorMsg error = new RestErrorMsg(i + 1, "読了日のフォーマットに誤りがあります。");
+                    errorList.add(error);
+                }
+            }
+        }
+
+        // エラーがあった場合 エラーリストを返して処理終了
+        if (errorList.size() > 0) {
+            // リストをJSON形式に変換
+            ObjectMapper mapper = new ObjectMapper();
+            mapper.enable(SerializationFeature.INDENT_OUTPUT);
+            String script = "";
+            try {
+                script = mapper.writeValueAsString(errorList);
+                response = new APIGatewayProxyResponseEvent()
+                    .withStatusCode(HttpStatusCode.BAD_REQUEST)
+                    .withBody(script);
+                return response;
+            } catch (JsonProcessingException e) {
+                response = new APIGatewayProxyResponseEvent()
+                    .withStatusCode(HttpStatusCode.BAD_GATEWAY)
+                    .withBody("応答に失敗しました。");
+                return response;
+            }
+        }
+
+        // データ登録
+        List<Book> bookList = new ArrayList<>();
+        for (String rocord : recordList) {
+            Book book = new Book();
+            String[] bookData = rocord.split(",", -1);
+            book.setUserId(targetId);
+            book.setTitle(bookData[0]);
+            book.setAuthor(bookData[1]);
+            book.setPrice(bookData[2]);
+            book.setPublisher(bookData[3]);
+            book.setPublished(bookData[4]);
+            book.setBuyDate(bookData[5]);
+            book.setCompleteDate(bookData[6]);
+            book.setGenre(bookData[7]);
+            book.setRate(bookData[8]);
+            book.setMemo(bookData[9]);
+            book.setImgUrl(bookData[10]);
+            book.setInfoUrl(bookData[11]);
+            bookList.add(book);
+        }
+
+        // DynamoDBクライアント生成
+        Region region = Region.AP_NORTHEAST_1;
+        DynamoDbClient ddb = DynamoDbClient.builder().region(region).build();
+
+        // 連番の最大を取得
+        Map<String, AttributeValue> attrValues = new HashMap<>();
+        attrValues.put(":targetId", AttributeValue.builder().s(targetId).build());
+        QueryRequest queryReq = QueryRequest.builder()
+            .tableName("t_bookshelf_book")
+            .keyConditionExpression("userId = :targetId")
+            .expressionAttributeValues(attrValues)
+            .build();
+        QueryResponse queryResponse = ddb.query(queryReq);
+        int maxSeqNo = 0;
+        for (Map<String, AttributeValue> item : queryResponse.items()) {
+            int seqNo = Integer.parseInt(item.get("seqNo").n());
+            if (seqNo > maxSeqNo) {
+                maxSeqNo = seqNo;
+            }
+        }
+
+        // 登録データ用意
+        List<WriteRequest> writeRequests = new ArrayList<>();
+        for (int i = 0; i < bookList.size(); i++) {
+            Book book = bookList.get(i);
+            Map<String, AttributeValue> bookAttributes = new HashMap<>();
+            bookAttributes.put("userId", AttributeValue.builder().s(book.getUserId()).build());
+            bookAttributes.put("seqNo", AttributeValue.builder().n(String.valueOf(maxSeqNo + i + 1)).build());
+            bookAttributes.put("title", AttributeValue.builder().s(book.getTitle()).build());
+            bookAttributes.put("author", AttributeValue.builder().s(book.getAuthor()).build());
+            bookAttributes.put("price", AttributeValue.builder().n(book.getPrice()).build());
+            bookAttributes.put("publisher", AttributeValue.builder().s(book.getPublisher()).build());
+            bookAttributes.put("published", AttributeValue.builder().s(book.getPublished()).build());
+            bookAttributes.put("buyDate", AttributeValue.builder().s(book.getBuyDate()).build());
+            bookAttributes.put("completeDate", AttributeValue.builder().s(book.getCompleteDate()).build());
+            bookAttributes.put("genre", AttributeValue.builder().n(book.getGenre()).build());
+            bookAttributes.put("rate", AttributeValue.builder().n(book.getRate()).build());
+            bookAttributes.put("memo", AttributeValue.builder().s(book.getMemo()).build());
+            bookAttributes.put("imgUrl", AttributeValue.builder().s(book.getImgUrl()).build());
+            bookAttributes.put("infoUrl", AttributeValue.builder().s(book.getInfoUrl()).build());
+            writeRequests.add(WriteRequest.builder().putRequest(PutRequest.builder().item(bookAttributes).build()).build());
+        }
+        try {
+            // DynamoDBのBatchWriteItemは一度に最大25件までしか処理できない。
+            // そのため、25件を超える場合はリクエストを分割して複数回送信する必要がある。
+            // 25件ずつ分割して処理
+            int batchSize = 25;
+            for (int start = 0; start < writeRequests.size(); start += batchSize) {
+                int end = Math.min(start + batchSize, writeRequests.size());
+                List<WriteRequest> batch = writeRequests.subList(start, end);
+                BatchWriteItemRequest batchWriteItemRequest = BatchWriteItemRequest.builder()
+                    .requestItems(Map.of("t_bookshelf_book", batch))
+                    .build();
+                ddb.batchWriteItem(batchWriteItemRequest);
+            }
+            response = new APIGatewayProxyResponseEvent()
+                        .withStatusCode(HttpStatusCode.OK)
+                        .withBody("本情報を登録しました。");
+        } catch (DynamoDbException e) {
+            System.out.println(e.getMessage());
+            response = new APIGatewayProxyResponseEvent()
+                    .withStatusCode(HttpStatusCode.INTERNAL_SERVER_ERROR)
+                    .withBody("データベースに接続できませんでした。: " + e.getMessage());
         }
         return response;
     }
