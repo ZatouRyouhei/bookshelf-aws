@@ -8,6 +8,7 @@ public class RestSearchCondition {
     private String completeDateTo;
     private int genre;
     private int rate;
+    private boolean unComplete;
 
     public String getUserId() {
         return userId;
@@ -50,5 +51,11 @@ public class RestSearchCondition {
     }
     public void setRate(int rate) {
         this.rate = rate;
+    }
+    public boolean isUnComplete() {
+        return unComplete;
+    }
+    public void setUnComplete(boolean unComplete) {
+        this.unComplete = unComplete;
     }
 }

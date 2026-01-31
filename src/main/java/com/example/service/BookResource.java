@@ -224,6 +224,14 @@ public class BookResource {
                         }
                         filterExpressionBuilder.append("rate = :rate");
                     }
+                    // 未完了フラグ
+                    if (paramCondition.isUnComplete()) {
+                        attrValues.put(":emptyCompleteDate", AttributeValue.builder().s("").build());
+                        if (filterExpressionBuilder.length() > 0) {
+                            filterExpressionBuilder.append(" and ");
+                        }
+                        filterExpressionBuilder.append("completeDate = :emptyCompleteDate");
+                    }
                     queryBuilder = queryBuilder.expressionAttributeValues(attrValues);
                     if (filterExpressionBuilder.length() > 0) {
                         queryBuilder = queryBuilder.filterExpression(filterExpressionBuilder.toString());
@@ -394,6 +402,14 @@ public class BookResource {
                             filterExpressionBuilder.append(" and ");
                         }
                         filterExpressionBuilder.append("rate = :rate");
+                    }
+                    // 未完了フラグ
+                    if (paramCondition.isUnComplete()) {
+                        attrValues.put(":emptyCompleteDate", AttributeValue.builder().s("").build());
+                        if (filterExpressionBuilder.length() > 0) {
+                            filterExpressionBuilder.append(" and ");
+                        }
+                        filterExpressionBuilder.append("completeDate = :emptyCompleteDate");
                     }
                     queryBuilder = queryBuilder.expressionAttributeValues(attrValues);
                     if (filterExpressionBuilder.length() > 0) {
